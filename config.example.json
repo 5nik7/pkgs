@@ -1,0 +1,11 @@
+{
+  "manager": "auto",
+  "preview": "bottom:55%:wrap",
+  "color": "auto",
+  "cache_seconds": 300,
+  "external_detection": true,
+  "commands": {
+    "ripgrep": ["rg"],
+    "fzf": ["fzf"]
+  }
+}

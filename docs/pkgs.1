@@ -1,0 +1,87 @@
+.TH PKGS 1 "October 2026" "pkgs 0.1.0" "User Commands"
+.SH NAME
+pkgs \- fuzzy package management for Termux and Linux
+.SH SYNOPSIS
+.B pkgs
+[COMMAND] [OPTIONS] [NAMES...]
+.SH DESCRIPTION
+Bare invocation displays help. Install and uninstall open an fzf multi-select
+picker when package names are omitted. Exact names bypass the picker.
+Transactions show the manager, scope, and command and request confirmation.
+.SH COMMANDS
+.TP
+.B install [NAMES...]
+Install exact names or open the package picker.
+.TP
+.B uninstall [NAMES...]
+Remove installed packages only. Alias: remove.
+.TP
+.B search [QUERY]
+Read-only picker; Enter shows information.
+.TP
+.B list [\-\-installed] [\-\-json]
+Show package inventory as readable text or JSON.
+.TP
+.B info NAMES...
+Colorized package information, wrapped to fit the terminal preview.
+.TP
+.B upgrade [NAMES...]
+Use the selected backend upgrade workflow. pip requires explicit names.
+.TP
+.B refresh
+Refresh repository metadata for APT, DNF and XBPS. Use upgrade with pacman.
+.TP
+.B managers, doctor
+Show detected managers or diagnose the environment.
+.TP
+.B completion SHELL [install|status|uninstall]
+Print or manage completions for bash, zsh, or fish. --install aliases install.
+.TP
+.B cache clear
+Remove pkgs catalog caches; does not touch package-manager caches.
+.SH OPTIONS
+.TP
+.B \-h, \-H, \-\-help
+Show help.
+.TP
+.B \-V, \-\-version
+Show version.
+.TP
+.B \-\-manager NAME
+Use apt, pacman, paru, yay, dnf, xbps, npm, uv-tool, pip, gem, or auto.
+.TP
+.B \-\-query TEXT
+Search/filter the picker. Do not combine with exact names.
+.TP
+.B \-\-global
+Select npm global scope. Default npm scope is the current project.
+.TP
+.B \-\-color MODE
+Choose auto, always, or never. Auto respects NO_COLOR.
+.TP
+.B \-p, \-\-preview LAYOUT
+fzf preview-window layout. Default: bottom:55%:wrap.
+.TP
+.B \-\-dry-run
+Display transaction without changing packages.
+.TP
+.B \-y, \-\-yes
+Skip pkgs confirmation and use backend noninteractive options where supported.
+.SH PICKER
+Tab/Shift-Tab select packages. Enter accepts. Ctrl-X toggles the preview.
+Alt-I hides/shows installed packages. Alt-O opens the highlighted homepage.
+Esc/Ctrl-C cancel. [i] marks installed packages; [e] marks an unowned related
+executable (same-name matches are candidates, not proof).
+.SH FILES
+~/.config/pkgs/config.json (XDG_CONFIG_HOME respected).
+.br
+~/.cache/pkgs/ (XDG_CACHE_HOME respected).
+.SH ENVIRONMENT
+FZF_DEFAULT_OPTS and FZF_DEFAULT_OPTS_FILE retain compatible fzf preferences.
+NO_COLOR disables automatic ANSI colors. PKGS_FUZZY_TAB=0 requests native
+completion without the bundled fuzzy Tab integration.
+.SH LIMITATIONS
+Registry catalogs are not exhaustive. pip/uv queries use exact PyPI names.
+Completion never searches remote registries. Native Windows is not supported.
+.SH SEE ALSO
+fzf(1), apt(8), pacman(8), dnf(8), xbps-query(1)

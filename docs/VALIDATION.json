@@ -1,0 +1,18 @@
+{
+  "version": "0.1.0",
+  "automated_tests": 46,
+  "result": "passed",
+  "additional_checks": [
+    "Bash and Zsh syntax",
+    "Bash and Zsh native completion candidates",
+    "isolated install, reinstall and uninstall with spaces in prefix",
+    "real local APT read-only package information"
+  ],
+  "not_live_tested": [
+    "fzf interactive UI",
+    "Fish shell",
+    "Termux device",
+    "non-APT package transactions"
+  ],
+  "host_package_changes": false
+}

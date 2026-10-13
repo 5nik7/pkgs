@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# pkgs 0.1.0 — fuzzy package management
+PKGS_VERSION=0.1.0
+case "${1-}" in --version|-V) printf 'pkgs %s\n' "$PKGS_VERSION"; exit 0;; esac
+command -v python3 >/dev/null 2>&1 || { printf 'pkgs: Python 3.9+ is required.\n' >&2; exit 1; }
+source_path=${BASH_SOURCE[0]}
+while [[ -L "$source_path" ]]; do
+  source_dir=$(cd -P -- "$(dirname -- "$source_path")" && pwd) || exit 1
+  source_path=$(readlink -- "$source_path") || exit 1
+  [[ "$source_path" = /* ]] || source_path=$source_dir/$source_path
+done
+source_dir=$(cd -P -- "$(dirname -- "$source_path")" && pwd) || exit 1
+exec python3 "$source_dir/main.py" "$@"
