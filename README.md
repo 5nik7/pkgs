@@ -1,62 +1,87 @@
 # pkgs 0.1.1
 
 A fuzzy package browser and package-manager frontend for **Termux and Linux**.
-Bash launcher, Python standard-library core, no pip dependencies.
-The command is **`pkgs`**. It does not replace Termux's `pkg`.
+Browse packages with fzf, inspect their metadata, and install or remove selections
+through your chosen manager. Human-readable, colorized output is the default;
+use `--json` for supported structured reports.
 
-## Install
+pkgs uses a Bash launcher and a Python standard-library core, with no pip
+dependencies. The command is **`pkgs`**; Termux's `pkg` remains its native frontend.
 
-Requirements: Bash 4+, Python 3.9+, and fzf 0.48+ for interactive pickers.
-Native completions target Bash 4+, Zsh 5.8+, and Fish 3.6+.
-Your selected package manager must already be installed.
+[Quick start](#quick-start) · [Installation](#installation) ·
+[Commands](#commands) · [Picker](#picker-and-preview) ·
+[Managers](#supported-managers-and-scope) · [Completion](#completion) ·
+[Configuration](#configuration) · [Troubleshooting](#troubleshooting) ·
+[Upgrade and uninstall](#upgrade-and-uninstall) · [Validation](#validation-and-platform-limits)
 
-Existing source installations such as `~/.fzf/bin/fzf` are supported. pkgs uses
-the first fzf on PATH, falling back to that source-build location. `pkgs doctor`
-reports the resolved executable, version, and any other `pkgs` shadowing it.
-The installer does not fetch dependencies or change package installations.
+## Quick start
 
-After extracting the release, enter its directory. From your actual Zsh session,
-provide its completion search path for this invocation only:
+Requirements: Bash 4+, Python 3.9+, and an installed supported package manager.
+Interactive pickers also require fzf 0.48+. Native completions target Bash 4+,
+Zsh 5.8+, and Fish 3.6+.
+
+From the root of a checkout or extracted source directory:
+
+```sh
+./pkgs --help
+./pkgs search editor
+./pkgs install --query editor --dry-run
+```
+
+`search` opens a read-only picker; Enter prints details for your selections.
+The install example lets you select packages and prints the planned transaction
+without running it. Remove `--dry-run` when ready to install; pkgs asks for
+confirmation before invoking the manager.
+
+Use `./pkgs` to run this checkout directly. After installation, use `pkgs` when
+the installation's `bin` directory is on PATH. Examples below use that installed
+command; substitute `./pkgs` when working from the checkout.
+
+## Installation
+
+The installer does not fetch dependencies or install packages through a manager.
+pkgs uses the first fzf on PATH, falling back to `~/.fzf/bin/fzf` for existing
+source installations. `pkgs doctor` reports the resolved executable and version.
+
+From the source directory, preview installation before applying it:
+
+```sh
+./install.sh --dry-run
+./install.sh
+```
+
+The default application prefix is `~/.local`. Installation creates the command
+at `~/.local/bin/pkgs`, the application under `~/.local/lib/pkgs`, and a man page
+under `~/.local/share/man/man1`. It also installs completions for shells found on
+PATH. **The installer does not add the command to PATH.** Ensure your shell
+includes the chosen prefix's `bin` directory, or use the absolute launcher path.
+Use `man pkgs` when your man-page search path includes the prefix's `share/man`.
+
+All completion destinations are checked before installation. If a destination
+cannot be determined reliably, installation stops with override instructions.
+For Zsh, run the following from your actual Zsh session to supply its live
+completion search path for these invocations:
 
 ```zsh
-cd pkgs-0.1.1
 FPATH="$FPATH" ./install.sh --dry-run
 FPATH="$FPATH" ./install.sh
 ```
 
-The default application prefix is `~/.local`. The installer installs the command,
-man page, and completions for shells found on PATH. **Bash and Zsh completion
-installation is file-only:** it never adds startup blocks, source statements,
-compinit/compdef calls, or fpath changes. It preflights all destinations before
-installing. An uncertain destination is an error, with override instructions.
+You can choose completion directories explicitly or install the application
+without completion setup:
 
 ```sh
-# Explicit destinations (choose directories your shell already uses):
+# Termux example: use only if this directory is already in Zsh's fpath.
 ./install.sh --completion-dir "zsh=$PREFIX/share/zsh/site-functions"
-# Skip completion setup, or use a custom application prefix:
+
+# Application-only installation; --prefix can select another location.
 ./install.sh --prefix "$HOME/.local" --no-completions
-./pkgs doctor
 ```
 
-The `$PREFIX` example is appropriate only when that directory is in your Zsh
-`fpath`. pkgs cannot inspect a parent shell's live arrays. It does not launch
-interactive shells or source startup files to guess them. It reports the
-resolved path and activation evidence separately from completion file status.
-
-Use the printed one-time reload instructions in your current shell. In Zsh,
-first verify the destination is in `$fpath`, then use your normal completion
-reload, or run `autoload -Uz compinit; compinit; autoload -Uz _pkgs; compdef _pkgs pkgs`.
-In Bash, with bash-completion loaded, a new session autoloads the file; `source`
-the printed completion file to register it in the current session. No reload
-command is written into startup files.
-
-Fish keeps its existing completion file and managed `conf.d` setup. Run
-`source ~/.config/fish/conf.d/pkgs.fish` (adjust for XDG_CONFIG_HOME), then return
-to the prompt. Rebinding Fish keys later requires `__pkgs_bind_tab` again.
-
-You can run `./pkgs` directly from the checkout. Check `whence -a pkgs fzf` in
-Zsh if an older command on PATH still runs. The installer warns about shadowing
-but does not change PATH. Use `man pkgs` if MANPATH includes the install prefix.
+Repeat `--completion-dir SHELL=DIR` for multiple shells. Bash and Zsh setup is
+file-only: it adds no startup blocks, source statements, or completion search
+paths. Fish uses a managed `conf.d` integration. Follow the printed one-time
+activation instructions and the [shell setup guidance](#completion) below.
 
 ## Commands
 
@@ -64,7 +89,7 @@ but does not change PATH. Use `man pkgs` if MANPATH includes the install prefix.
 |---|---|
 | `pkgs` | Usage, without starting fzf |
 | `pkgs help`, `pkgs -h`, `pkgs -H`, `pkgs --help` | Usage |
-| `pkgs --version` | Version |
+| `pkgs --version`, `pkgs -V` | Version |
 | `pkgs install` | Multi-select installation picker |
 | `pkgs install --query editor` | Search and pick |
 | `pkgs install git ripgrep` | Install exactly those names |
@@ -90,88 +115,80 @@ default. JSON is opt-in for `list`, `info`, `managers`, `doctor`, and
 `install --query git` opens a picker. Name arguments are validated and passed as
 separate subprocess arguments, never interpolated into shell commands.
 Version specifications, package URLs, local install paths, arbitrary backend
-options and shell aliases for managers are outside this first release.
+options and shell aliases for managers are not supported in 0.1.1.
 
 Transactions print the selected manager, scope, and command, then ask
 `Proceed? [y/N]`. The manager can also ask its own questions. `--yes` skips the
 pkgs prompt and supplies the backend's supported noninteractive flag where
 available; some managers can still prompt. `--dry-run` prints the transaction
-without running it. Passing names bypasses the picker, not confirmation.
+without running it, although preparation and previews may still query metadata.
+Passing names bypasses the picker, not confirmation.
 
-## Picker and readable preview
+## Picker and preview
 
 | Key | Action |
 |---|---|
-| Tab / Shift-Tab | Select multiple packages and move |
-| Enter | Accept selected packages, or highlighted package |
+| Tab / Shift-Tab | Toggle selection and move down/up |
+| Enter | Accept selected packages, or the highlighted package |
 | Ctrl-X | Hide/show preview |
 | Alt-I | Hide/show manager-installed packages |
 | Alt-O | Open the highlighted package's HTTP(S) homepage |
 | Esc / Ctrl-C | Cancel without changing packages |
 
-The preview is visible by default, below the results. It has a purple package
-heading, cyan section headings and labels, green installed state, amber external
-command evidence, and dim supporting text. Description and metadata wrap to the
-preview width. Sections show manager/scope, versions, description, external
-commands, package details, and links. Absent fields are omitted.
+The preview appears below the results and shows available versions, description,
+manager/scope, external commands, package details, and links. Text wraps to the
+preview width; absent fields are omitted and terminal control characters are
+stripped from metadata. Registry previews may fetch metadata.
 
-Use `--preview 'right:55%:wrap'` for a wide terminal, or
-`--preview 'bottom:hidden:55%:wrap'` to start hidden. The renderer strips terminal
-control characters from package metadata. It does not depend on bat or alter
-BAT_THEME. ANSI colors use terminal palette colors, so they suit your theme.
+Use `--preview 'right:55%:wrap'` for a wide terminal or
+`--preview 'bottom:hidden:55%:wrap'` to start hidden. The preview uses terminal
+palette colors and does not require bat or change `BAT_THEME`.
 
-`--color auto` respects `NO_COLOR`; `--color never` disables colors;
-`--color always` explicitly enables them. FZF_DEFAULT_OPTS and
-FZF_DEFAULT_OPTS_FILE are inherited, including your colors. pkgs sets its own
-record layout, preview, selection keys and output protocol. Options that alter
-fzf's returned records (for example `--accept-nth`), `--filter`, or custom
-accept/reload bindings are not compatible defaults for this picker.
+`--color auto` respects `NO_COLOR`; `--color never` disables pkgs colors;
+`--color always` explicitly enables them. Your fzf colors and compatible
+`FZF_DEFAULT_OPTS` / `FZF_DEFAULT_OPTS_FILE` preferences remain inherited.
+pkgs controls the picker layout, selection keys, preview, and returned records;
+see [troubleshooting](#troubleshooting) for incompatible defaults.
 
-Alt-O prefers `termux-open-url`, then `termux-open` in Termux. Elsewhere it uses
-macOS `open`, `wslview`, `xdg-open`, or `gio open`, as available. The executable
-receives the URL as one argument. URL-opening results and errors appear in the
-preview. No homepage means a readable notice; no guessed command execution.
-Registry previews may fetch metadata from the selected registry.
+URLs open only when you press Alt-O. In Termux, pkgs prefers `termux-open-url`,
+then `termux-open`; elsewhere it uses an available platform URL handler.
+The URL is passed as a single argument, and results or errors appear in the
+preview. A missing homepage produces a notice.
 
 ### Markers and external commands
 
-- `[i]`: installed in the selected manager and scope.
-- `[e]`: related executable found outside the selected system database's ownership.
-- `[i][e]`: installed package plus an unowned executable copy.
-- Blank: not recorded as installed; no cached external evidence is available.
+| Marker | Meaning |
+|---|---|
+| `[i]` | Installed in the selected manager and scope |
+| `[e]` | Related executable found outside the selected system database's ownership |
+| `[i][e]` | Installed package plus an unowned executable copy |
+| Blank | Not recorded as installed; no cached external evidence is available |
 
-The picker opens using inventory and a fresh installed database query. It does
-not scan ownership for the entire catalog. Highlighting a package displays
-basic information immediately, then enriches its preview with metadata and
-external evidence within five seconds. Initial rows and `list` use valid cached
-`[e]` evidence; fresh evidence appears in the preview and on later picker opens.
-A blank marker does not mean an exhaustive external check was performed.
+Installed state is read fresh. External-command checks happen lazily in previews,
+without scanning ownership for the entire catalog. Initial rows and `list` use
+valid cached evidence; new evidence appears in the preview and on later picker
+opens. A blank marker does not mean an exhaustive external check was performed.
 
-APT and standard pacman database fingerprints permit persistent evidence reuse;
-other layouts use preview-session reuse only. Database, executable, symlink,
-PATH-directory or mapping changes invalidate reusable evidence, as does TTL.
+For example, pkgs can detect `~/.fzf/bin/fzf` even when APT does not own it.
+The preview identifies paths, ownership, and whether an association comes from
+a known mapping such as `ripgrep` → `rg` or a same-name candidate. Same-name
+matches do not prove package identity, and failed ownership queries do not
+produce external markers.
 
-For example, `~/.fzf/bin/fzf` can be detected even if APT does not own it.
-Preview evidence includes path, resolved path where relevant, PATH order,
-ownership, and whether the association uses a known mapping or a same-name
-candidate. `ripgrep` → `rg` is a known mapping. Same-name matches are not proof
-of package identity. This is a best-effort executable check, not a complete
-inventory of source builds, shell functions, aliases, libraries, or containers.
-Ownership-query failures do not become external markers.
+This is a best-effort check for system-manager inventories, not a complete
+inventory of source builds, aliases, functions, libraries, or containers.
+**Uninstall candidates always come from the selected manager's installed
+database.** Detecting a source-built executable never makes it a removal target.
 
-External-command detection applies to system-manager inventories. Uninstall
-still includes only packages that the selected manager owns. Your source-built
-executables never become APT removal targets because they were detected.
-
-## Managers and scope
+## Supported managers and scope
 
 | Manager | Inventory/search | Scope and transactions |
 |---|---|---|
-| APT | Local apt-cache + dpkg status | System; sudo when non-root |
-| pacman | Local synchronized database | System; sudo when non-root |
+| APT | Local apt-cache + dpkg status | System; sudo when non-root outside Termux |
+| pacman | Local synchronized database | System; sudo when non-root outside Termux |
 | paru / yay | Repo catalog; queried AUR search | Helper handles privileges |
-| DNF 4/5 | Cached repoquery + rpm | System; sudo when non-root |
-| XBPS | Local repository metadata + installed database | System; sudo when non-root |
+| DNF 4/5 | Cached repoquery + rpm | System; sudo when non-root outside Termux |
+| XBPS | Local repository metadata + installed database | System; sudo when non-root outside Termux |
 | npm | Explicit registry search + cached candidates | Current project unless `--global` |
 | uv-tool | Exact PyPI name lookup + cached candidates | uv isolated tool environments |
 | pip | Exact PyPI name lookup + cached candidates | Python interpreter running pkgs |
@@ -187,8 +204,8 @@ summary produced by your installed backend.
 Outside Termux, ID and ID_LIKE in /etc/os-release select the default and the
 required tools are verified. APT, Arch derivatives, Fedora/RHEL derivatives,
 and Void are supported. Explicit `--manager` overrides detection. On Arch with
-a query, auto selection prefers paru then yay when present. Pick `--manager
-pacman` to keep the operation in official repositories.
+a query, auto selection prefers paru then yay when present. Pick
+`--manager pacman` to keep the operation in official repositories.
 
 ```sh
 pkgs install --manager npm --global --query typescript
@@ -214,82 +231,118 @@ the launcher, and therefore the pip environment. Check `pkgs doctor`.
 
 ## Completion
 
-```sh
-pkgs completion bash                 # Print generated script
-pkgs completion zsh install --directory "$PREFIX/share/zsh/site-functions"
-pkgs completion zsh update           # Update the recorded destination
-pkgs completion ZSH --install         # Alias; shell names are case-insensitive
+`pkgs <Tab>` completes commands and options. `pkgs install <Tab>` offers available
+candidates; `pkgs uninstall <Tab>` offers only installed packages. Selecting
+packages inserts quoted names and excludes names already entered.
+**Completion never runs package transactions or registry searches.** Candidates
+come from local catalogs and caches; previews inside a fuzzy picker may fetch
+registry metadata, and Alt-O opens a URL only on your keypress.
+
+### Bash
+
+```bash
+pkgs completion bash install
+pkgs completion bash status
+```
+
+Bash uses an explicit `--directory DIR`, the recorded destination, or an installed
+bash-completion loader's user autoload convention:
+`$BASH_COMPLETION_USER_DIR/completions`, otherwise
+`${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions`.
+Multiple user directories are checked in order. Without a recognized loader,
+automatic setup fails; an explicit directory permits file-only installation
+with an activation warning.
+
+With bash-completion loaded, a new session can autoload the file. To register it
+in the current session, source the completion file at the printed destination.
+Finding a loader does not prove the current shell has loaded it. pkgs uses a
+command-specific completion function and preserves global Readline bindings.
+
+### Zsh
+
+Run from your Zsh session:
+
+```zsh
+FPATH="$FPATH" pkgs completion zsh install
+FPATH="$FPATH" pkgs completion zsh status
+```
+
+Zsh chooses an explicit `--directory DIR`, its recorded managed destination, or
+the first writable absolute directory in caller-supplied `FPATH`. An earlier
+conflicting `_pkgs` is reported. No inactive fallback directory is assumed.
+pkgs cannot inspect its parent shell's live arrays and does not launch
+interactive shells or source startup files to guess them.
+
+Verify that the destination is in `$fpath`, then use your normal completion
+reload or run this once in the current shell:
+
+```zsh
+autoload -Uz compinit
+compinit
+autoload -Uz _pkgs
+compdef _pkgs pkgs
+```
+
+With fzf-tab, pkgs supplies native descriptions and leaves that plugin's preview
+and keys under your control. Without fzf-tab, package completion invokes the
+bundled fzf picker directly. The bundled preview and Alt-O binding apply to that
+picker, not to fzf-tab's own UI.
+
+### Fish
+
+```fish
 pkgs completion fish install
+pkgs completion fish status
+```
+
+Follow the printed activation instructions. With the default configuration
+location, run `source ~/.config/fish/conf.d/pkgs.fish`, then return to the prompt;
+adjust the path when using `XDG_CONFIG_HOME`.
+
+Fish installs a Tab dispatcher for pkgs and retains the previous binding's
+commands for other input. Integration is reapplied at the next prompt after
+sourcing. Rebinding keys later requires `__pkgs_bind_tab` again.
+
+### Completion management and preferences
+
+```sh
+pkgs completion bash                 # Print the generated script
+pkgs completion zsh update           # Update the recorded destination
 pkgs completion zsh status --json
 pkgs completion zsh uninstall
 ```
 
-Zsh chooses an explicit directory, its recorded managed destination, or the
-first writable absolute directory in caller-supplied `FPATH`. An earlier
-conflicting `_pkgs` is reported. No `~/.local/share/zsh/site-functions` fallback
-is assumed active. From Zsh, `FPATH="$FPATH" pkgs completion zsh install` supplies
-the live search path without a persistent environment change.
+Shell names are case-insensitive, and `completion ZSH --install` is an alias
+for `completion zsh install`. The completion command accepts `--directory DIR`;
+the main installer accepts repeatable `--completion-dir SHELL=DIR` overrides.
+Status separates file content/version, destination discovery, loader evidence,
+and activation. A child process cannot verify or activate its parent's live
+completion state.
 
-Bash uses the recorded destination or an installed bash-completion loader's
-user autoload convention: `$BASH_COMPLETION_USER_DIR/completions`, otherwise
-`${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions`. Multiple
-user directories are checked in order. Without a recognized loader, automatic
-setup fails; an explicit directory still permits file-only installation with
-an activation warning. Finding a loader does not prove the current Bash has
-loaded it. No shell startup files are sourced for discovery.
+Managed paths and hashes are recorded in
+`${XDG_STATE_HOME:-$HOME/.local/state}/pkgs/completions.json`. Retain that state
+location when changing data/configuration directories so update and uninstall
+can find earlier destinations. Repeated completion installation makes no content
+changes or extra backups when current. Foreign files, edited completions, and
+completion symlinks are not overwritten.
 
-The main installer accepts repeatable `--completion-dir SHELL=DIR` overrides;
-the completion command accepts `--directory DIR`. Status reports file content,
-version, resolution source, loader evidence, and activation separately. A child
-process cannot verify or activate its parent's live completion state.
-
-Managed paths and content hashes are recorded in
-`${XDG_STATE_HOME:-$HOME/.local/state}/pkgs/completions.json`. Keep that state
-location when changing data/configuration directories, so update and uninstall
-can find earlier destinations. Repeated installation makes no content changes
-or extra backups when current. Foreign files, edited completions, and completion
-symlinks are not overwritten.
-
-On upgrading from 0.1.0, exact generated Bash/Zsh startup blocks are removed.
-The resolved startup-file target is backed up first; symlinks, permissions, and
-surrounding bytes are preserved. Edited, duplicate, or malformed blocks require
-manual review and prevent that shell's migration. Only exact known legacy
-completion files are retired after publishing their replacement; unrelated old
-files are retained with notices. Migration respects ZDOTDIR and recorded paths.
-Fish retains its managed startup block and binding behavior.
-
-`pkgs <Tab>` completes commands/options. `pkgs install <Tab>` offers available
-candidates; `pkgs uninstall <Tab>` offers only installed packages. Selecting
-one or more packages inserts quoted names. **Completion does not run a
-transaction.** Already-entered package names are excluded.
-
-Bash uses a command-specific completion function, without replacing global
-Readline bindings. Zsh supplies native descriptions to an existing fzf-tab
-plugin; without it, the command completion invokes fzf directly. fzf-tab's own
-preview configuration and selection keys remain under your control; the pkgs
-picker preview/Alt-O binding belongs to the bundled picker. Fish installs a
-Tab dispatcher for pkgs and retains the previous binding's commands for other
-input. Fish integration is reapplied at the next prompt after sourcing.
-
-Set `PKGS_FUZZY_TAB=0` to use native completion only. For Bash/Zsh:
+Set `PKGS_FUZZY_TAB=0` to use native completion only:
 
 ```sh
-export PKGS_FUZZY_TAB=0
+export PKGS_FUZZY_TAB=0               # Bash or Zsh
 ```
 
-For Fish: `set -gx PKGS_FUZZY_TAB 0`. If set after the binding is installed,
-the dispatcher falls back to the prior binding. Completion reads local catalogs
-and caches only; it never issues a registry search or package transaction.
-Native candidate generation has a 1.5-second local-query budget. A failed or
-slow query produces no candidates and a nonzero helper status; `PKGS_DEBUG=1`
-adds stderr diagnostics. It never falls back to stale uninstall candidates. Preview requests
-inside a fuzzy completion picker may fetch registry details, just like the
-ordinary picker, and Alt-O opens a URL only on your keypress.
+For Fish, use `set -gx PKGS_FUZZY_TAB 0`; an existing dispatcher falls back to its
+prior binding. Native candidate generation has a 1.5-second local-query budget.
+Failed or slow queries return no candidates and a nonzero helper status;
+`PKGS_DEBUG=1` adds stderr diagnostics. Uninstall completion never falls back
+to stale candidates.
 
 ## Configuration
 
 Optional file: `${XDG_CONFIG_HOME:-$HOME/.config}/pkgs/config.json`.
-Copy `config.example.json` there and edit it. There are no mandatory config files.
+Copy [config.example.json](config.example.json) there and edit it. There are no
+mandatory config files.
 
 ```json
 {
@@ -307,24 +360,47 @@ catalogs live in `${XDG_CACHE_HOME:-$HOME/.cache}/pkgs`; installed state is read
 fresh, and attempted transactions invalidate that scope's catalog and external
 evidence. `external_detection: false` disables optional evidence checks.
 
-Use `pkgs --debug install --dry-run` to see phase timings on stderr. Preparation
-has a 45-second read-only query budget, previews five seconds, and each ownership
-query at most three seconds within the preview budget. Slow foreground work
-prints a delayed stderr progress notice. Query failures are distinct from empty
-catalogs and cancellation. Interactive package transactions have no artificial
-timeout and retain their native prompts.
+## Troubleshooting
 
-Picker helpers use a controlled noninteractive Bash child rather than invoking
-your interactive startup configuration. The user environment and fzf settings
-are not rewritten. `--filter` and output-transforming defaults are rejected;
-colors and compatible preferences remain inherited.
+| Symptom | What to check |
+|---|---|
+| `pkgs` is missing or runs an older copy | Run `./pkgs doctor` from the checkout. In Zsh, use `whence -a pkgs fzf`; in Bash, use `type -a pkgs fzf`; in Fish, use `type -a pkgs fzf`. Check the chosen prefix's `bin` directory on PATH. |
+| Completion file exists but Tab does not work | Run `pkgs completion SHELL status` with your shell name to inspect the destination and activation evidence. Follow the shell-specific setup above; file installation alone does not activate a running shell. |
+| fzf reports an error or behaves unexpectedly | Inspect `FZF_DEFAULT_OPTS` and `FZF_DEFAULT_OPTS_FILE`. Output-transforming options such as `--accept-nth`, `--print`, and `--filter` are rejected; custom accept/reload bindings are incompatible. |
+| Catalogs are missing or queries fail | Run `pkgs managers` and `pkgs doctor`. Check local repository metadata and registry connectivity where applicable; use the selected manager's supported refresh/upgrade flow. |
+| Preparation or previews are slow | Run `pkgs --debug install --dry-run` for phase timings on stderr. Query failures are reported separately from empty results and cancellation. |
+
+To isolate fzf defaults for one invocation from Bash or Zsh:
+
+```sh
+env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE ./pkgs install --query fzf --dry-run --debug
+```
+
+Preparation has a 45-second read-only query budget, previews five seconds, and
+ownership queries at most three seconds within the preview budget. Slow
+foreground work prints a delayed stderr progress notice. Interactive package
+transactions retain their native prompts and have no artificial timeout.
+Picker helpers run in a controlled noninteractive Bash child without sourcing
+your interactive startup configuration.
+
+See [testing and device acceptance](docs/TESTING.md) for detailed diagnostics
+and isolated checks.
 
 ## Upgrade and uninstall
 
-Extract a newer release and run its `./install.sh`. Completion content updates
-along with the application. Previous application installations are kept beside
+From a newer source checkout or extracted release, run `./install.sh` with
+the same prefix and any required completion context or overrides. Completion
+content updates along with the application. Previous installations are kept beside
 `lib/pkgs` as timestamped backups; remove those backups manually when no longer
 needed. Startup backups are also retained for recovery.
+
+When upgrading from 0.1.0, exact generated Bash/Zsh startup blocks are removed
+with backups of the resolved startup-file targets. Symlinks, permissions, and
+surrounding bytes are preserved. Edited, duplicate, or malformed blocks require
+manual review and prevent that shell's migration. Only exact known legacy
+completion files are retired after their replacements are published; unrelated
+files are retained with notices. Migration respects `ZDOTDIR` and recorded
+paths. Fish retains its managed startup block and binding behavior.
 
 ```sh
 ./uninstall.sh --dry-run
@@ -339,6 +415,8 @@ want to retain shell integration for another installation.
 
 ## Validation and platform limits
 
+Run the automated suite and shell syntax checks from the source directory:
+
 ```sh
 python3 -m unittest discover -s tests -v
 bash -n pkgs install.sh uninstall.sh completions/pkgs.bash
@@ -346,21 +424,24 @@ zsh -n completions/pkgs.zsh
 fish -n completions/pkgs.fish
 ```
 
-Validation includes mocked-manager regressions, isolated install/reinstall/uninstall
-with paths containing spaces, Bash/Zsh native completion, and Bash/Zsh/Fish
-syntax checks. Real source-built fzf 0.74.5 was exercised in Termux PTYs for
-selection, metadata, defaults/options files, and cancellation during slow
-previews. Termux APT was queried read-only; no host package transactions ran.
+Tests mock package-manager transactions and install/reinstall/uninstall the
+application only in temporary locations. They cover backend behavior,
+completion, migration, and paths containing spaces. Real-fzf PTY tests use
+fixture package metadata and skip when fzf is unavailable.
 
-The user's live Zsh/fzf-tab session, Fish interactive bindings, URL handlers,
-older fzf binaries, and other Linux devices still need acceptance testing.
-Fixture coverage is not real-device coverage. See `docs/TESTING.md` and
-`docs/VALIDATION.json` for the checked environment and results. Native
-Windows/PowerShell and Homebrew adapters are outside this release.
+The checked-in [0.1.1 validation record](docs/VALIDATION.json), dated
+**2026-10-13**, reports 85 passing tests on native Android/Termux with Python
+3.14, Bash 5.3.20, Zsh 5.9.2, Fish 4.9.3, and source-built fzf 0.74.5.
+It records shell syntax and isolated completion checks, real-fzf PTY behavior,
+and separate read-only Termux APT queries. No host package transactions ran.
+These are historical results, not a claim that every environment is tested.
 
-## Project layout
+Live Zsh/fzf-tab configuration, Fish interactive bindings, URL handlers, older
+fzf binaries, and other Linux devices still need acceptance testing. Fixture
+coverage is not real-device coverage. Native Windows/PowerShell and Homebrew
+adapters are outside this release.
 
-`pkgs` and `main.py` are entry points. `pkgs_lib/` contains detection, backend
-adapters, catalog/cache logic, preview/picker, completion management, and CLI
-routing. `completions/` holds versioned shell integrations. `tests/` is the
-standard-library unittest suite. No installation commands run in tests.
+See [testing and device acceptance](docs/TESTING.md) for procedures,
+[backend references](docs/SOURCES.md) for sources, and the
+[changelog](CHANGELOG.md) for release changes. The [man page](docs/pkgs.1)
+provides the command reference.
