@@ -1,4 +1,4 @@
-# pkgs managed completion 0.1.0
+# pkgs managed completion 0.1.1
 # PKGS_FUZZY_TAB=0 opts out; no global Readline binding is replaced.
 _pkgs_complete() {
     local cur="${COMP_WORDS[COMP_CWORD]}" line name desc quoted joined=''

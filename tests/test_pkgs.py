@@ -23,7 +23,8 @@ class Isolated(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix='pkgs-test-')
         self.home = Path(self.tmp.name)
         self.env = patch.dict(os.environ, {'HOME': str(self.home), 'XDG_CACHE_HOME': str(self.home/'cache'),
-                                         'XDG_CONFIG_HOME': str(self.home/'config'), 'XDG_DATA_HOME': str(self.home/'data'),
+                                         'XDG_STATE_HOME': str(self.home/'state'), 'FPATH': '', 'FZF_DEFAULT_OPTS': '', 'FZF_DEFAULT_OPTS_FILE': '',
+                                         'BASH_COMPLETION_USER_DIR': '', 'XDG_CONFIG_HOME': str(self.home/'config'), 'XDG_DATA_HOME': str(self.home/'data'),
                                          'ZDOTDIR': str(self.home/'z dot'), 'TERMUX_VERSION': '', 'TERMUX_APP_PACKAGE_MANAGER': '',
                                          'PREFIX': '', 'PKGS_FUZZY_TAB': '0'})
         self.env.start()
@@ -213,7 +214,7 @@ class Preview(Isolated):
             self.assertFalse(external(Package('fzf'), b, self.cfg).external)
     def fake_fzf(self, body):
         path = self.home/'fake-fzf'
-        path.write_text('#!' + sys.executable + '\n' + body)
+        path.write_text('#!' + sys.executable + '\nimport sys\nif \"--version\" in sys.argv: print(\"0.74.5\"); sys.exit(0)\n' + body)
         path.chmod(0o755)
         return str(path)
     def test_picker_raw_identity_and_cleanup(self):
@@ -245,11 +246,12 @@ class Completions(Isolated):
             dest, rc = completion.locations(shell)
             rc.parent.mkdir(parents=True, exist_ok=True)
             rc.write_text('# user settings\n')
-            completion.manage(shell, 'install')
+            completion.manage(shell, 'install', dest.parent)
             first = rc.read_text()
-            completion.manage(shell, 'install')
+            completion.manage(shell, 'install', dest.parent)
             self.assertEqual(first, rc.read_text())
-            self.assertEqual(first.count('# >>> pkgs completion >>>'), 1)
+            self.assertEqual(first.count('# >>> pkgs completion >>>'), 1 if shell == 'fish' else 0)
+            if shell != 'fish': self.assertEqual(first, '# user settings\n')
             self.assertEqual(completion.manage(shell, 'status')['status'], 'current')
             completion.manage(shell, 'uninstall')
             self.assertIn('# user settings', rc.read_text())
@@ -258,14 +260,14 @@ class Completions(Isolated):
         dest, _ = completion.locations('bash')
         dest.parent.mkdir(parents=True)
         dest.write_text('# custom completion')
-        with self.assertRaises(Error): completion.manage('bash', 'install')
+        with self.assertRaises(Error): completion.manage('bash', 'install', dest.parent)
         self.assertEqual(dest.read_text(), '# custom completion')
     def test_startup_symlink_preserved(self):
         _, rc = completion.locations('bash')
         target = self.home/'actual-bashrc'
         target.write_text('# settings\n')
         rc.symlink_to(target)
-        completion.manage('bash', 'install')
+        completion.manage('bash', 'install', self.home/'completions')
         self.assertTrue(rc.is_symlink())
         self.assertIn('# settings', target.read_text())
     def test_context_respects_manager_and_scope(self):

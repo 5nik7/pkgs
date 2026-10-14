@@ -1,5 +1,5 @@
 #compdef pkgs
-# pkgs managed completion 0.1.0
+# pkgs managed completion 0.1.1
 local -a values descriptions selected args
 local line name desc
 args=("${(@)words[2,CURRENT]}")

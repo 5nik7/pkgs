@@ -7,13 +7,15 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
+import time
 from . import VERSION
-from .common import Error, Package, Cache, config, clean, validate_names, which
+from .common import Error, Package, Cache, config, clean, validate_names, which, budget, phase, diagnostics, diagnostic, ROOT
 from .detect import MANAGERS, default_manager, available, termux
 from .backends import Backend
-from .catalog import inventory, external, key
-from .ui import colored, render, pick, session
-from .completion import COMMANDS, generated, manage, complete
+from .catalog import inventory, key, EvidenceCache, invalidate_evidence
+from .ui import colored, render, pick, session, enrich
+from .completion import COMMANDS, generated, manage, complete, preflight
+from .fzf import details as fzf_details
 
 DESCRIPTION = '''Fuzzy package management for Termux and Linux.
 
@@ -27,7 +29,7 @@ Commands:
   refresh                 Refresh repository metadata where supported
   managers                Show detected managers and capabilities
   doctor                  Explain environment, dependencies, completions
-  completion SHELL [install|status|uninstall]
+  completion SHELL [install|update|status|uninstall]
                           Print or manage Bash/Zsh/Fish completion
   cache clear             Clear pkgs inventory caches
   help                    Show this usage
@@ -57,6 +59,8 @@ def parser():
     p.add_argument('--json', action='store_true', help='machine-readable reporting output')
     p.add_argument('--color', choices=('auto', 'always', 'never'))
     p.add_argument('-p', '--preview', help='fzf preview-window layout')
+    p.add_argument('--directory', help='completion destination directory (file-only for Bash/Zsh)')
+    p.add_argument('--debug', action='store_true', help='phase timing diagnostics on stderr')
     p.add_argument('--dry-run', action='store_true')
     p.add_argument('-y', '--yes', action='store_true')
     return p
@@ -96,7 +100,8 @@ def choose_manager(args, cfg):
 def execute(backend, action, names, args, cfg):
     names = validate_names(names, backend.name)
     if action == 'uninstall':
-        installed = {key(p.name, backend.name) for p in backend.installed()}
+        with budget(45), phase('Reading installed packages'):
+            installed = {key(p.name, backend.name) for p in backend.installed()}
         missing = [n for n in names if key(n, backend.name) not in installed and not
                    (backend.name == 'apt' and any(x.partition(':')[0] == n for x in installed))]
         if missing:
@@ -137,11 +142,22 @@ def execute(backend, action, names, args, cfg):
                 return rc if rc > 0 else 128 - rc
     finally:
         # A failed backend may still have made partial progress.
-        Cache(backend.cache_key).clear()
+        try:
+            Cache(backend.cache_key).clear()
+            invalidate_evidence(backend)
+        except OSError as e:
+            diagnostic(f'Cache invalidation failed: {e}', warning=True)
     return 0
 
 
 def main(argv=None):
+    args = sys.argv[1:] if argv is None else argv
+    with diagnostics('--debug' in args or os.environ.get('PKGS_DEBUG') == '1',
+                     quiet=bool(args and args[0] in ('__complete', '__session'))):
+        return _main(args)
+
+
+def _main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     try:
         if argv and argv[0] == '__session':
@@ -156,6 +172,8 @@ def main(argv=None):
             except (Error, ValueError) as e:
                 # No diagnostics in completion candidate output; only interactive pickers report failures.
                 if fuzzy: print('pkgs: ' + str(e), file=sys.stderr)
+                else: diagnostic(str(e))
+                return 1
             return 0
         # Accept completion SHELL --install as a spelling of the action.
         if 'completion' in argv:
@@ -166,6 +184,9 @@ def main(argv=None):
             p.print_help()
             return 0
         cfg = config()
+        cfg['debug'] = args.debug
+        if args.directory and args.command != 'completion':
+            raise Error('--directory applies only to completion management.')
         if args.color: cfg['color'] = args.color
         if args.preview: cfg['preview'] = args.preview
         command = 'uninstall' if args.command == 'remove' else args.command
@@ -173,14 +194,20 @@ def main(argv=None):
             raise Error('--json is available for list, info, managers, doctor, and completion status.')
         if command == 'completion':
             if not 1 <= len(args.names) <= 2:
-                raise Error('Usage: pkgs completion SHELL [install|status|uninstall]')
+                raise Error('Usage: pkgs completion SHELL [install|update|status|uninstall]')
             shell = args.names[0].lower()
             if shell not in ('bash', 'zsh', 'fish'): raise Error('Shell must be bash, zsh, or fish.')
             if len(args.names) == 1:
                 print(generated(shell), end='')
             else:
                 if args.json and args.names[1] != 'status': raise Error('--json is supported for completion status.')
-                report(manage(shell, args.names[1]), args.json, cfg['color'])
+                if args.dry_run and args.names[1] != 'status':
+                    if args.names[1] not in ('install', 'update', 'uninstall'):
+                        raise Error('Unknown completion action.')
+                    plan = preflight(shell, args.names[1], args.directory)
+                    report({'shell': shell, 'file': str(plan['dest']), 'status': 'dry-run; no files changed'}, False, cfg['color'])
+                else:
+                    report(manage(shell, args.names[1], args.directory), args.json, cfg['color'])
             return 0
         if command == 'managers':
             report([{'manager': m, 'scope': Backend(m, args.global_scope and m == 'npm').scope,
@@ -190,12 +217,15 @@ def main(argv=None):
             return 0
         if command == 'doctor':
             try:
-                detected = default_manager()
+                with budget(45), phase('Detecting backend'):
+                    detected = default_manager()
             except Error as e:
                 detected = str(e)
             report({'version': VERSION, 'environment': 'Termux' if termux() else sys.platform,
                     'default_manager': detected, 'configured_manager': cfg['manager'],
-                    'python': sys.executable, 'fzf': which('fzf') or 'missing (required for pickers)',
+                    'python': sys.executable, 'fzf': fzf_details(),
+                    'launcher': str(ROOT / 'pkgs'), 'pkgs_on_path': which('pkgs') or 'missing',
+                    'command_shadowed': bool(which('pkgs') and Path(which('pkgs')).resolve() != (ROOT / 'pkgs').resolve()),
                     'cwd': str(Path.cwd()), 'virtual_env': os.environ.get('VIRTUAL_ENV', 'none'),
                     'completions': [manage(s, 'status') for s in ('bash', 'zsh', 'fish')]}, args.json, cfg['color'])
             return 0
@@ -218,26 +248,35 @@ def main(argv=None):
         if command == 'info' and not args.names: raise Error('Usage: pkgs info NAME ...')
         if args.query and command not in ('install', 'uninstall', 'search', 'list'):
             raise Error('--query applies to install, uninstall, search, and list.')
-        backend = choose_manager(args, cfg)
+        preparation_started = time.monotonic()
+        with budget(45), phase('Detecting backend'):
+            backend = choose_manager(args, cfg)
         if command == 'info':
             names = validate_names(args.names, backend.name)
-            installed = {key(p.name, backend.name): p for p in backend.installed()}
+            with budget(45), phase('Reading installed packages'):
+                installed = {key(p.name, backend.name): p for p in backend.installed()}
             rows = []
+            metadata_failed = False
             for n in names:
                 package = installed.get(key(n, backend.name), Package(n))
-                rows.append(external(backend.info(package), backend, cfg))
+                package, notice = enrich(package, backend, cfg)
+                if notice:
+                    package.details['Notice'] = notice
+                    metadata_failed |= notice.startswith('Metadata unavailable:')
+                rows.append(package)
             if args.json: print(json.dumps([asdict(p) for p in rows], indent=2))
             else: print('\n\n'.join(render(p, backend, cfg['color']) for p in rows))
-            return 0
+            return 1 if metadata_failed else 0
         if command in ('upgrade', 'refresh') or (command in ('install', 'uninstall') and args.names):
             return execute(backend, command, args.names, args, cfg)
-        rows = inventory(backend, cfg, args.query if command != 'uninstall' else '',
-                         installed_only=args.installed or command == 'uninstall')
+        with budget(max(0, 45 - (time.monotonic() - preparation_started))):
+            rows = inventory(backend, cfg, args.query if command != 'uninstall' else '',
+                             installed_only=args.installed or command == 'uninstall')
         if command == 'list':
             if args.query:
                 rows = [p for p in rows if args.query.lower() in (p.name + ' ' + p.description).lower()]
-            owners = {}
-            for item in rows: external(item, backend, cfg, owners)
+            if cfg.get('external_detection'):
+                EvidenceCache(backend, cfg).apply(rows)
             if args.json: print(json.dumps([asdict(p) for p in rows], indent=2))
             else:
                 for item in rows:
@@ -247,9 +286,12 @@ def main(argv=None):
         selected = pick(rows, backend, cfg, args.query)
         if not selected: return 0
         if command == 'search':
+            metadata_failed = False
             for item in selected:
-                print(render(backend.info(item), backend, cfg['color']))
-            return 0
+                item, notice = enrich(item, backend, cfg)
+                print(render(item, backend, cfg['color'], message=notice))
+                metadata_failed |= notice.startswith('Metadata unavailable:')
+            return 1 if metadata_failed else 0
         return execute(backend, command, [p.name for p in selected], args, cfg)
     except KeyboardInterrupt:
         return 130

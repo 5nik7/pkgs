@@ -1,4 +1,4 @@
-.TH PKGS 1 "October 2026" "pkgs 0.1.0" "User Commands"
+.TH PKGS 1 "October 2026" "pkgs 0.1.1" "User Commands"
 .SH NAME
 pkgs \- fuzzy package management for Termux and Linux
 .SH SYNOPSIS
@@ -34,7 +34,7 @@ Refresh repository metadata for APT, DNF and XBPS. Use upgrade with pacman.
 .B managers, doctor
 Show detected managers or diagnose the environment.
 .TP
-.B completion SHELL [install|status|uninstall]
+.B completion SHELL [install|update|status|uninstall]
 Print or manage completions for bash, zsh, or fish. --install aliases install.
 .TP
 .B cache clear
@@ -67,19 +67,61 @@ Display transaction without changing packages.
 .TP
 .B \-y, \-\-yes
 Skip pkgs confirmation and use backend noninteractive options where supported.
+.TP
+.B \-\-directory DIR
+Completion destination directory. Bash and Zsh installation is file-only.
+.TP
+.B \-\-debug
+Print read-only preparation phase timings to stderr.
+.SH COMPLETION
+Install/update writes _pkgs for Zsh or pkgs for Bash without adding startup
+blocks, fpath changes, source statements, compinit, or compdef calls.
+Fish retains its completion file and managed conf.d setup.
+.br
+Zsh uses an explicit directory, a recorded destination, or caller-supplied
+FPATH. From Zsh: FPATH="$FPATH" pkgs completion zsh install.
+The child process cannot inspect the parent shell's live fpath or completion state.
+.br
+Bash requires a recognized bash-completion loader for automatic resolution.
+It respects BASH_COMPLETION_USER_DIR, otherwise XDG_DATA_HOME's user completion
+directory. Installing the file does not load bash-completion in the current shell.
+An explicit directory permits file-only installation with activation unverified.
+.br
+The application installer accepts repeatable --completion-dir SHELL=DIR.
+Unknown destinations fail preflight without changing startup files. Status
+reports the file, content/version, resolution, loader and activation separately.
+Reload instructions are printed, never written into startup files.
+.br
+Exact legacy pkgs blocks are removed after backing up the startup target;
+symlinks and unrelated content are preserved. Edited/malformed blocks and
+foreign or edited completions are left untouched and reported.
 .SH PICKER
 Tab/Shift-Tab select packages. Enter accepts. Ctrl-X toggles the preview.
 Alt-I hides/shows installed packages. Alt-O opens the highlighted homepage.
 Esc/Ctrl-C cancel. [i] marks installed packages; [e] marks an unowned related
-executable (same-name matches are candidates, not proof).
+executable (same-name matches are candidates, not proof). Rows and list use
+cached external evidence. A blank marker does not prove no external command
+exists. Highlighting a package fetches current evidence in the preview without
+blocking initial picker startup. Source-built ~/.fzf/bin/fzf remains supported.
+.br
+Read-only preparation queries have a 45-second budget; preview enrichment has
+five seconds and individual ownership queries at most three seconds. Slow work
+prints delayed stderr progress. Esc/Ctrl-C cancels queries and preview children.
+Interactive package transactions retain native prompts and have no such timeout.
 .SH FILES
 ~/.config/pkgs/config.json (XDG_CONFIG_HOME respected).
 .br
 ~/.cache/pkgs/ (XDG_CACHE_HOME respected).
+.br
+~/.local/state/pkgs/completions.json (XDG_STATE_HOME respected); records managed
+completion destinations for subsequent update/uninstall.
 .SH ENVIRONMENT
 FZF_DEFAULT_OPTS and FZF_DEFAULT_OPTS_FILE retain compatible fzf preferences.
 NO_COLOR disables automatic ANSI colors. PKGS_FUZZY_TAB=0 requests native
-completion without the bundled fuzzy Tab integration.
+completion without the bundled fuzzy Tab integration. Native candidate generation
+uses local data with a 1.5-second query budget. PKGS_DEBUG=1 enables helper
+stderr diagnostics. FPATH may be supplied by the invoking Zsh for one command.
+Picker helpers use a controlled noninteractive Bash child without startup hooks.
 .SH LIMITATIONS
 Registry catalogs are not exhaustive. pip/uv queries use exact PyPI names.
 Completion never searches remote registries. Native Windows is not supported.

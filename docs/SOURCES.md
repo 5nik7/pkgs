@@ -12,3 +12,5 @@ that every upstream version was exercised on a live host.
 - DNF 4 commands: https://dnf.readthedocs.io/en/stable/command_ref.html
 - XBPS queries: https://man.voidlinux.org/xbps-query.1
 - Fish binding behavior: https://fishshell.com/docs/current/cmds/bind.html
+
+- XBPS ownership result semantics: https://github.com/void-linux/xbps/blob/master/bin/xbps-query/ownedby.c

@@ -6,7 +6,7 @@ import re
 import sys
 import urllib.parse
 import urllib.request
-from .common import Package, Error, run, which, clean
+from .common import Package, Error, run, which, clean, query, remaining, diagnostic
 from .detect import termux, SYSTEM
 
 
@@ -31,7 +31,7 @@ def paragraphs(text):
 def pypi(name):
     url = 'https://pypi.org/pypi/' + urllib.parse.quote(name, safe='') + '/json'
     try:
-        with urllib.request.urlopen(url, timeout=12) as r:
+        with urllib.request.urlopen(url, timeout=remaining(12)) as r:
             data = json.load(r)['info']
         links = data.get('project_urls') or {}
         return Package(data['name'], data['version'], data.get('summary') or '',
@@ -214,7 +214,7 @@ class Backend:
             # Official registry metadata; installed state remains from the local gem database.
             try:
                 url = 'https://rubygems.org/api/v1/gems/' + urllib.parse.quote(p.name, safe='') + '.json'
-                with urllib.request.urlopen(url, timeout=12) as r:
+                with urllib.request.urlopen(url, timeout=remaining(12)) as r:
                     d = json.load(r)
                 p.version, p.description = d.get('version', p.version), d.get('info', p.description)
                 p.url = d.get('homepage_uri') or d.get('project_uri', '')
@@ -236,12 +236,40 @@ class Backend:
         else:
             return None
         try:
-            value = run(args, allowed=(0, 1)).strip()
-            # Some managers put unowned-file messages on stdout.
-            if not value or 'not owned' in value or 'no package owns' in value:
+            result = query(args, timeout=3)
+            text = clean(result.stdout + ' ' + result.stderr)
+            # XBPS returns a successful empty scan for an unowned path.
+            if n == 'xbps' and result.returncode == 0 and not text:
                 return ''
-            return clean(value)
-        except Error:
+            if result.returncode == 0 and result.stdout.strip():
+                return clean(result.stdout)
+            unowned = {'apt': 'no path found matching pattern',
+                       'pacman': 'no package owns', 'paru': 'no package owns',
+                       'yay': 'no package owns', 'dnf': 'is not owned by any package',
+                       'xbps': 'is not owned by any package'}
+            if result.returncode == 1 and unowned[n] in text.lower():
+                return ''
+            self.ownership_error = f'{args[0]} ownership unavailable (exit {result.returncode}): {text}'
+        except Error as e:
+            self.ownership_error = str(e)
+        diagnostic(self.ownership_error)
+        return None
+
+    def database_fingerprint(self):
+        """Only persist ownership when a known local database can be identified."""
+        prefix = Path(os.environ.get('PREFIX') or '/usr')
+        if self.name == 'apt':
+            root = Path(os.environ.get('DPKG_ADMINDIR') or
+                        (str(prefix / 'var/lib/dpkg') if self.termux else '/var/lib/dpkg'))
+            paths = [root / 'status', root / 'info']
+        elif self.name in ('pacman', 'paru', 'yay'):
+            paths = [prefix / 'var/lib/pacman/local' if self.termux else Path('/var/lib/pacman/local')]
+        else:
+            # RPM/XBPS layouts vary. Session cache only; never guess a database.
+            return None
+        try:
+            return [[str(p), p.stat().st_ino, p.stat().st_mtime_ns, p.stat().st_ctime_ns, p.stat().st_size] for p in paths]
+        except OSError:
             return None
 
     def transaction(self, action, names, yes=False):

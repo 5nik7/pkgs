@@ -1,4 +1,4 @@
-# pkgs managed completion 0.1.0
+# pkgs managed completion 0.1.1
 function __pkgs_candidates
     set -l words (commandline -opc)
     set -e words[1]

@@ -1,18 +1,87 @@
 {
-  "version": "0.1.0",
-  "automated_tests": 46,
+  "version": "0.1.1",
+  "date": "2026-10-13",
+  "automated_tests": 85,
   "result": "passed",
+  "environment": {
+    "platform": "native Android/Termux",
+    "python": "3.14",
+    "bash": "5.3.20",
+    "zsh": "5.9.2",
+    "fish": "4.9.3",
+    "fzf": "0.74.5 (source build under ~/.fzf/bin/fzf)"
+  },
   "additional_checks": [
-    "Bash and Zsh syntax",
-    "Bash and Zsh native completion candidates",
-    "isolated install, reinstall and uninstall with spaces in prefix",
-    "real local APT read-only package information"
+    "Bash, Zsh and Fish syntax",
+    "Bash/Zsh native candidates and real autoload registration in isolated shells",
+    "Isolated main install, reinstall, uninstall and completion migration; prefix/directory paths with spaces",
+    "Exact legacy startup migration, backup content, symlink/permission preservation and malformed-block refusal",
+    "Actual fzf PTY multiselection, preview metadata, Ctrl-X/Alt-I, Esc, Ctrl-C, options-file defaults and slow-preview child cleanup",
+    "Read-only Termux APT catalog and requested command matrix; isolated cold/warm caches",
+    "No ownership queries before fzf launch for a 5000-row fixture",
+    "Python 3.9 grammar parse; tests ran on Python 3.14"
   ],
+  "baseline": {
+    "version": "0.1.0",
+    "available_packages": 5081,
+    "installed_packages": 996,
+    "picker_probe_limit_seconds": 20,
+    "fzf_reached_within_probe": false,
+    "cause": "Per-entry pre-picker ownership queries; independent --expect= rejection by fzf 0.74.5"
+  },
+  "native_read_only_pty": [
+    {
+      "command": "./pkgs install --dry-run",
+      "cache": "cold",
+      "visible_seconds": 1.068,
+      "cancel_seconds": 0.137,
+      "exit": 0
+    },
+    {
+      "command": "./pkgs install --query fzf --dry-run",
+      "cache": "warm",
+      "visible_seconds": 0.992,
+      "cancel_seconds": 0.138,
+      "exit": 0
+    },
+    {
+      "command": "./pkgs search",
+      "cache": "warm",
+      "visible_seconds": 0.98,
+      "cancel_seconds": 0.178,
+      "exit": 0
+    },
+    {
+      "command": "./pkgs search fzf",
+      "cache": "warm",
+      "visible_seconds": 1.15,
+      "cancel_seconds": 0.142,
+      "exit": 0
+    },
+    {
+      "command": "./pkgs uninstall --dry-run",
+      "cache": "installed database only",
+      "visible_seconds": 0.79,
+      "cancel_seconds": 0.135,
+      "exit": 0
+    }
+  ],
+  "instrumented_launch_boundary_seconds": {
+    "install_cold": 0.437,
+    "install_query_warm": 0.245,
+    "search_warm": 0.213,
+    "search_query_warm": 0.226,
+    "uninstall": 0.096
+  },
+  "timing_note": "Observed samples, not performance guarantees. PTY runs used actual APT and fzf, cancelled without accepting packages. Launch-boundary probes substituted cancellation at fzf launch and forbade ownership queries/transactions.",
   "not_live_tested": [
-    "fzf interactive UI",
-    "Fish shell",
-    "Termux device",
-    "non-APT package transactions"
+    "User interactive Zsh/fzf-tab session and its exact exported fzf configuration",
+    "Fish interactive Tab bindings",
+    "Platform URL handler opening",
+    "fzf 0.48 binary (compatibility covered by source inspection and fixtures)",
+    "Other Linux devices/backends and real package transactions"
   ],
-  "host_package_changes": false
+  "host_package_changes": false,
+  "live_startup_changes": false,
+  "user_fzf_or_path_changes": false
 }

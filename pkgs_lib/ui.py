@@ -10,9 +10,10 @@ import sys
 import tempfile
 import textwrap
 import urllib.parse
-from .common import ROOT, Package, Error, clean, atomic, which
+from .common import ROOT, Package, Error, clean, atomic, which, budget, phase, diagnostics, diagnostic, run
 from .backends import Backend
-from .catalog import external
+from .catalog import external, EvidenceCache
+from .fzf import invocation, PROTOCOL
 from .detect import termux
 
 PALETTE = {'title': '1;35', 'heading': '1;36', 'good': '32', 'warn': '33', 'dim': '2', 'label': '36'}
@@ -122,10 +123,12 @@ def pick(rows, backend, cfg, query='', completion=False):
     if not rows:
         if backend.remote_inventory:
             raise Error('No cached candidates. Use install --query NAME (pip/uv: exact name), or supply exact package names.')
+        diagnostic('No packages in the selected manager/scope.', warning=True)
         return []
-    owners = {}
-    for p in rows:
-        external(p, backend, cfg, owners)
+    with phase('Preparing picker rows'):
+        if cfg.get('external_detection'):
+            EvidenceCache(backend, cfg).apply(rows)
+    args, env = invocation(fzf)
     with tempfile.TemporaryDirectory(prefix='pkgs-') as tmp:
         root = Path(tmp)
         state = {'backend': backend.name, 'global': backend.global_scope, 'cfg': cfg,
@@ -134,21 +137,22 @@ def pick(rows, backend, cfg, query='', completion=False):
         atomic(root / 'all', '\n'.join(row(p, i, cfg['color']) for i, p in enumerate(rows)) + '\n')
         hidden_rows = [row(p, i, cfg['color']) for i, p in enumerate(rows) if not p.installed]
         atomic(root / 'hide', '\n'.join(hidden_rows) + ('\n' if hidden_rows else ''))
-        env = {**os.environ, 'PKGS_SESSION': tmp, 'PKGS_MAIN': str(ROOT / 'main.py'), 'PKGS_PYTHON': sys.executable}
-        helper = '"$PKGS_PYTHON" "$PKGS_MAIN" __session '
+        env.update(PKGS_SESSION=tmp, PKGS_MAIN=str(ROOT / 'main.py'), PKGS_PYTHON=sys.executable)
+        helper = 'exec "$PKGS_PYTHON" "$PKGS_MAIN" __session '
         binds = ['ctrl-x:toggle-preview', 'alt-i:reload(' + helper + 'toggle)',
                  'alt-o:execute-silent(' + helper + 'open {1})+refresh-preview',
                  'tab:toggle+down', 'shift-tab:toggle+up']
-        args = [fzf, '--ansi', '--multi', '--cycle', '+e', '--no-hscroll',
+        args += ['--ansi', '--multi', '--cycle', '+e', '--no-hscroll',
                 '--delimiter=\t', '--with-nth=2..', '--preview=' + helper + 'preview {1}',
                 '--preview-window=' + cfg['preview'], '--query=' + query,
-                '--header=' + backend.name + ' · ' + backend.scope + '\nTab select · Ctrl-X preview · Alt-I installed · Alt-O URL\nEnter ' + ('insert names' if completion else 'accept') + ' · Esc cancel',
+                '--header=' + backend.name + ' · ' + backend.scope + '\nTab select · Ctrl-X preview · Alt-I installed · Alt-O URL\nEnter ' + ('insert names' if completion else 'accept') + ' · Esc cancel · [e] cached; highlight for current evidence',
                 '--bind=' + ','.join(binds)]
         if cfg['color'] == 'never' or (cfg['color'] == 'auto' and 'NO_COLOR' in os.environ):
             args += ['--color=bw']
         # Preserve FZF_DEFAULT_OPTS/FILE (including colors); override record/output settings only.
-        args += ['--no-read0', '--no-print0', '--no-print-query', '--expect=', '--bind=enter:accept,esc:abort,ctrl-c:abort']
+        args += PROTOCOL
         with (root / 'all').open() as stream:
+            diagnostic('Launching fzf: ' + fzf)
             proc = subprocess.run(args, stdin=stream, stdout=subprocess.PIPE, text=True, env=env)
         if proc.returncode in (1, 130):
             return []
@@ -179,29 +183,52 @@ def session(action, ident=None):
         print((root / source).read_text(), end='')
         return 0
     data = json.loads((root / 'state.json').read_text())
+    if action not in ('preview', 'open') or ident is None or not ident.isdigit():
+        raise Error('Invalid preview action or identifier.')
     index = int(ident)
     p = Package(**data['packages'][index])
     backend = Backend(data['backend'], data['global'])
     detail_file = root / ('detail-' + str(index) + '.json')
     message_file = root / ('message-' + str(index))
     message = message_file.read_text() if message_file.exists() else ''
-    try:
+    cfg = data['cfg']
+    if action == 'preview':
+        print(render(p, backend, cfg['color'], True, 'Loading metadata and external evidence…'), flush=True)
+    with diagnostics(cfg.get('debug', False), quiet=True):
         if detail_file.exists():
-            p = Package(**json.loads(detail_file.read_text()))
+            saved = json.loads(detail_file.read_text())
+            p = Package(**saved['package'])
+            message = saved.get('notice', '') or message
         else:
-            p = backend.info(p)
-            atomic(detail_file, json.dumps(asdict(p)))
-    except Error as e:
-        message = 'Metadata unavailable: ' + str(e)
+            with budget(5):
+                p, notice = enrich(p, backend, cfg)
+            message = notice or message
+            atomic(detail_file, json.dumps({'package': asdict(p), 'notice': notice}))
     if action == 'open':
         try:
-            result = subprocess.run(opener(p.url), capture_output=True, text=True, timeout=15)
-            if result.returncode:
-                raise Error(clean(result.stderr) or f'URL opener exited {result.returncode}')
+            run(opener(p.url), timeout=5)
             message = 'Opened package homepage.'
-        except (Error, OSError, subprocess.TimeoutExpired) as e:
+        except (Error, OSError) as e:
             message = str(e)
         atomic(message_file, message)
         return 0
-    print(render(p, backend, data['cfg']['color'], True, message))
+    # fzf supports clearing a streamed preview; this escape is our own control,
+    # never untrusted metadata. Basic information was visible throughout the wait.
+    print('\x1b[2J' + render(p, backend, cfg['color'], True, message), flush=True)
     return 0
+
+
+def enrich(p, backend, cfg):
+    """Bounded optional enrichment, also used after accepting search results."""
+    notices = []
+    with budget(5):
+        try:
+            with phase('Reading package metadata'):
+                p = backend.info(p)
+        except (Error, OSError, ValueError) as e:
+            notices.append('Metadata unavailable: ' + str(e))
+        try:
+            p = external(p, backend, cfg, cache=EvidenceCache(backend, cfg))
+        except (Error, OSError) as e:
+            notices.append('External evidence unavailable: ' + str(e))
+    return p, '; '.join(notices)
